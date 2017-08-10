@@ -13,12 +13,39 @@ import (
 func TestAccess(t *testing.T) {
 	var err error
 
-	item := NewGenericPassword("TestAccess", "test2", "A label", []byte("toomanysecrets2"), "")
+	service, account, label, accessGroup, password := "TestAccess", "test", "", "", "toomanysecrets"
+
+	item := NewGenericPassword(service, account, label, []byte(password), accessGroup)
 	defer func() { _ = DeleteItem(item) }()
 
 	trustedApplications := []string{"/Applications/Mail.app"}
 	item.SetAccess(&Access{Label: "Mail", TrustedApplications: trustedApplications})
 	err = AddItem(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = GetGenericPassword(service, account, label, accessGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccessOnlyTrustingSelf(t *testing.T) {
+	var err error
+
+	service, account, label, accessGroup, password := "TestAccess", "test", "", "", "toomanysecrets"
+
+	item := NewGenericPassword(service, account, label, []byte(password), accessGroup)
+	defer func() { _ = DeleteItem(item) }()
+
+	item.SetAccess(&Access{})
+	err = AddItem(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = GetGenericPassword(service, account, label, accessGroup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,16 +249,56 @@ func TestStatus(t *testing.T) {
 	path := tempPath(t)
 	defer func() { _ = os.Remove(path) }()
 	k, newErr := NewKeychain(path, "testkeychainpassword")
-	if newErr != nil {
-		t.Fatal(newErr)
-	}
 
 	if err := k.Status(); err != nil {
 		t.Fatal(err)
 	}
 
 	nonexistent := NewWithPath(fmt.Sprintf("this_shouldnt_exist_%d", time.Now()))
+
 	if err := nonexistent.Status(); err != ErrorNoSuchKeychain {
 		t.Fatalf("Expected %v, get %v", ErrorNoSuchKeychain, err)
+	}
+}
+
+func TestAccessOnNewKeychain(t *testing.T) {
+	path := tempPath(t)
+	defer func() { _ = os.Remove(path) }()
+
+	kc, newErr := NewKeychain(path, "testkeychainpassword")
+	if newErr != nil {
+		t.Fatal(newErr)
+	}
+
+	service, account, label, accessGroup, password := "TestAccessOnNewKeychain", "test", "my label", "blah", "toomanysecrets"
+
+	item := NewGenericPassword(service, account, label, []byte(password), accessGroup)
+	item.UseKeychain(kc)
+	item.SetAccess(&Access{SelfUntrusted: false})
+
+	err := AddItem(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := NewItem()
+	query.SetMatchSearchList(kc)
+	query.SetService(service)
+	query.SetAccount(account)
+	query.SetSecClass(SecClassGenericPassword)
+	query.SetMatchLimit(MatchLimitOne)
+	query.SetLabel(label)
+	query.SetAccessGroup(accessGroup)
+	query.SetReturnData(true)
+	results, err := QueryItem(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("Should have 1 result, had %d", len(results))
+	}
+	if string(results[0].Data) != password {
+		t.Fatalf("Invalid password: %s", results[0].Data)
 	}
 }
